@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>傩戏壁画 · 烛光探秘</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%; overflow: hidden; background: #000;
+            touch-action: none;
+        }
+        body.playing { cursor: none; }
+
+        #video-layer {
+            position: absolute; inset: 0; z-index: 1; background: #000; display: none;
+        }
+        #video-layer video { width: 100%; height: 100%; object-fit: cover; }
+
+        #wall-layer {
+            position: absolute; inset: 0; z-index: 2; display: none;
+            background: url('nuoxian.png') center/cover no-repeat;
+            -webkit-mask: radial-gradient(circle at var(--cx, 50%) var(--cy, 50%),
+                          transparent 0%,
+                          transparent calc(var(--r, 6%) * 0.65),
+                          rgba(255,255,255,0.15) calc(var(--r, 6%) * 0.78),
+                          rgba(255,255,255,0.6) calc(var(--r, 6%) * 0.9),
+                          white calc(var(--r, 6%)),
+                          white 100%);
+                  mask: radial-gradient(circle at var(--cx, 50%) var(--cy, 50%),
+                          transparent 0%,
+                          transparent calc(var(--r, 6%) * 0.65),
+                          rgba(255,255,255,0.15) calc(var(--r, 6%) * 0.78),
+                          rgba(255,255,255,0.6) calc(var(--r, 6%) * 0.9),
+                          white calc(var(--r, 6%)),
+                          white 100%);
+        }
+
+        #three-canvas { position: absolute; inset: 0; z-index: 5; pointer-events: none; }
+        #ui-canvas    { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+
+        #flash {
+            position: absolute; inset: 0; z-index: 50;
+            background: radial-gradient(circle, #fff8e0, #ffaa44);
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+
+        #start-overlay {
+            position: absolute; inset: 0; z-index: 10;
+            display: flex; flex-direction: column; align-items: center;
+            pointer-events: none; transition: opacity 1s;
+        }
+        #start-overlay.hidden { opacity: 0; }
+
+        #start-title {
+            margin-top: 8vh;
+            color: #f4d29a; font-family: Georgia, '宋体', serif;
+            font-size: 38px; letter-spacing: 12px; font-weight: 300;
+            text-shadow: 0 0 25px rgba(244,210,154,0.4);
+        }
+
+        #start-bottom {
+            margin-top: auto; margin-bottom: 10vh;
+            display: flex; flex-direction: column; align-items: center; gap: 18px;
+            max-width: 500px; padding: 0 30px;
+        }
+        #intro-text {
+            color: #887755; font-size: 14px; line-height: 1.9;
+            letter-spacing: 1.5px; text-align: center;
+            font-family: Georgia, '宋体', serif;
+        }
+        #start-hint {
+            color: #bba875; font-size: 15px; letter-spacing: 3px;
+            font-family: Georgia, '宋体', serif;
+            animation: hintPulse 2.5s ease infinite;
+        }
+        @keyframes hintPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+
+        /* 摄像头预览：纯黑底，只显示骨骼 */
+        .cam-box {
+            position: fixed; bottom: 20px; right: 20px;
+            width: 200px; height: 150px; z-index: 100;
+            border: 2px solid rgba(244,210,154,0.35); border-radius: 8px;
+            overflow: hidden; background: #0a0a08;
+        }
+        /* 摄像头画面完全隐藏，但保留给 MediaPipe 读取 */
+        #webcam {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            transform: scaleX(-1); object-fit: cover;
+            opacity: 0; pointer-events: none;
+        }
+        #bone-canvas {
+            position: absolute; inset: 0; width: 100%; height: 100%;
+            transform: scaleX(-1); pointer-events: none;
+        }
+
+        #status {
+            position: fixed; bottom: 20px; left: 20px; color: #8f8; font-size: 13px; z-index: 101;
+            background: rgba(0,0,0,0.55); padding: 6px 14px; border-radius: 4px;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+
+    <div id="video-layer">
+        <video id="secret-video" muted loop playsinline preload="auto">
+            <source src="nuoxi.mp4" type="video/mp4">
+        </video>
+    </div>
+    <div id="wall-layer"></div>
+    <canvas id="three-canvas"></canvas>
+    <canvas id="ui-canvas"></canvas>
+    <div id="flash"></div>
+
+    <div id="start-overlay">
+        <h1 id="start-title">傩 戏 壁 画</h1>
+        <div id="start-bottom">
+            <p id="intro-text">
+                傩戏，源自远古驱邪祈福的仪式，被誉为「戏剧活化石」。<br>
+                举起烛火，照亮千年壁画，唤醒沉睡的傩神。
+            </p>
+            <span id="start-hint">正在启动摄像头...</span>
+        </div>
+    </div>
+
+    <div class="cam-box" id="cam-box">
+        <video id="webcam" autoplay muted playsinline></video>
+        <canvas id="bone-canvas"></canvas>
+    </div>
+
+    <div id="status"></div>
+
+<script>
+const root = document.documentElement;
+
+let appState = 'loading';
+let fistProgress = 0;
+let palmOpen = 0;
+let handDetected = false;
+let handX = window.innerWidth / 2;
+let handY = window.innerHeight / 2;
+
+const FILL_DURATION = 2.0;
+const DECAY_RATE = 0.5;
+
+let scene, threeCamera, renderer, candleModel, candleLight;
+let modelLoaded = false;
+let lightRadius = 6;
+
+const MODEL_SCALE = 1.0;
+const FLAME_OFFSET_Y = 1.35;
+const FLAME_OFFSET_Z = 0.12;
+const MAP_X = 5.5;
+const MAP_Y = 3.5;
+
+const uiCanvas = document.getElementById('ui-canvas');
+const uiCtx = uiCanvas.getContext('2d');
+const boneCanvas = document.getElementById('bone-canvas');
+const boneCtx = boneCanvas.getContext('2d');
+
+const HAND_CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [0,9],[9,10],[10,11],[11,12],
+    [0,13],[13,14],[14,15],[15,16],
+    [0,17],[17,18],[18,19],[19,20],
+    [5,9],[9,13],[13,17]
+];
+
+/* ========== 淡黄色手部骨骼绘制 ========== */
+function drawBones(lm) {
+    const w = boneCanvas.width, h = boneCanvas.height;
+    boneCtx.clearRect(0, 0, w, h);
+
+    // 骨骼连线：淡黄色
+    boneCtx.strokeStyle = 'rgba(244, 210, 154, 0.7)';
+    boneCtx.lineWidth = 2;
+    boneCtx.shadowColor = 'rgba(244, 210, 154, 0.5)';
+    boneCtx.shadowBlur = 6;
+    for (const [a, b] of HAND_CONNECTIONS) {
+        boneCtx.beginPath();
+        boneCtx.moveTo(lm[a].x * w, lm[a].y * h);
+        boneCtx.lineTo(lm[b].x * w, lm[b].y * h);
+        boneCtx.stroke();
+    }
+
+    // 关节点
+    boneCtx.shadowBlur = 0;
+    for (let i = 0; i < lm.length; i++) {
+        const isTip = [4, 8, 12, 16, 20].includes(i);
+        boneCtx.beginPath();
+        boneCtx.arc(lm[i].x * w, lm[i].y * h, isTip ? 5 : 3, 0, Math.PI * 2);
+        // 指尖亮黄，其他关节暗黄
+        boneCtx.fillStyle = isTip ? '#ffe0a0' : 'rgba(244, 210, 154, 0.6)';
+        boneCtx.fill();
+        if (isTip) {
+            boneCtx.strokeStyle = 'rgba(255, 240, 200, 0.4)';
+            boneCtx.lineWidth = 1;
+            boneCtx.stroke();
+        }
+    }
+}
+
+function initThree() {
+    const canvas = document.getElementById('three-canvas');
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+
+    scene = new THREE.Scene();
+    threeCamera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+    threeCamera.position.set(0, 0, 7);
+
+    scene.add(new THREE.AmbientLight(0xcccccc, 0.9));
+    scene.add(new THREE.HemisphereLight(0xfff0e0, 0x223344, 0.7));
+
+    candleLight = new THREE.PointLight(0xffaa66, 3, 18, 1.8);
+    scene.add(candleLight);
+
+    const loader = new THREE.GLTFLoader();
+    loader.load('nuoxi.glb', (gltf) => {
+        candleModel = gltf.scene;
+        candleModel.scale.set(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
+        candleModel.rotation.y = Math.PI;
+        scene.add(candleModel);
+        modelLoaded = true;
+    });
+}
+
+function calculatePalmOpen(lm) {
+    const tips = [8, 12, 16, 20];
+    const pips = [6, 10, 14, 18];
+    let extended = 0;
+    for (let i = 0; i < 4; i++) {
+        if (lm[tips[i]].y < lm[pips[i]].y) extended++;
+    }
+    const thumbDist = Math.hypot(lm[4].x - lm[2].x, lm[4].y - lm[2].y);
+    if (thumbDist > 0.06) extended += 0.8;
+    return Math.min(1, extended / 4.8);
+}
+
+function worldToScreen(pos) {
+    const v = pos.clone().project(threeCamera);
+    return {
+        x: (v.x * 0.5 + 0.5) * window.innerWidth,
+        y: (-v.y * 0.5 + 0.5) * window.innerHeight
+    };
+}
+
+function drawProgressRing(sx, sy, progress) {
+    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+    if (appState === 'active') return;
+
+    const r = 34;
+    uiCtx.beginPath();
+    uiCtx.arc(sx, sy, r, 0, Math.PI * 2);
+    uiCtx.strokeStyle = 'rgba(255,200,100,0.18)';
+    uiCtx.lineWidth = 3;
+    uiCtx.stroke();
+
+    if (progress > 0.01) {
+        uiCtx.save();
+        uiCtx.beginPath();
+        uiCtx.arc(sx, sy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+        uiCtx.strokeStyle = '#ffcc66';
+        uiCtx.lineWidth = 3.5;
+        uiCtx.lineCap = 'round';
+        uiCtx.shadowColor = '#ffaa00';
+        uiCtx.shadowBlur = 12;
+        uiCtx.stroke();
+        uiCtx.restore();
+
+        uiCtx.fillStyle = '#f4d29a';
+        uiCtx.font = '13px Georgia';
+        uiCtx.textAlign = 'center';
+        uiCtx.fillText(Math.floor(progress * 100) + '%', sx, sy + r + 22);
+    }
+}
+
+async function initMediaPipe() {
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+    });
+    hands.setOptions({
+        maxNumHands: 1, modelComplexity: 0,
+        minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
+    });
+    hands.onResults((results) => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            handDetected = true;
+            const lm = results.multiHandLandmarks[0];
+            handX = (1 - lm[9].x) * window.innerWidth;
+            handY = lm[9].y * window.innerHeight;
+            palmOpen = calculatePalmOpen(lm);
+            drawBones(lm);
+        } else {
+            handDetected = false;
+            palmOpen = 0;
+            boneCtx.clearRect(0, 0, boneCanvas.width, boneCanvas.height);
+        }
+    });
+
+    const video = document.getElementById('webcam');
+    boneCanvas.width = 640;
+    boneCanvas.height = 480;
+    const cam = new Camera(video, {
+        onFrame: async () => { await hands.send({ image: video }); },
+        width: 640, height: 480
+    });
+    await cam.start();
+}
+
+function enterPaintingMode() {
+    appState = 'active';
+    document.getElementById('video-layer').style.display = 'block';
+    document.getElementById('wall-layer').style.display = 'block';
+    document.getElementById('secret-video').play().catch(() => {});
+
+    const flash = document.getElementById('flash');
+    flash.style.opacity = '0.9';
+    setTimeout(() => { flash.style.opacity = '0'; }, 300);
+
+    const overlay = document.getElementById('start-overlay');
+    overlay.classList.add('hidden');
+    setTimeout(() => { overlay.style.display = 'none'; }, 1000);
+
+    document.body.classList.add('playing');
+    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+}
+
+let lastTime = performance.now();
+
+function animate() {
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = (now - lastTime) / 1000;
+    lastTime = now;
+    const t = now * 0.001;
+
+    if (!modelLoaded) {
+        if (renderer) renderer.render(scene, threeCamera);
+        return;
+    }
+
+    // ===== 启动界面 =====
+    if (appState !== 'active') {
+        const bobY = Math.sin(t * 1.2) * 0.25;
+        const centerPos = new THREE.Vector3(0, -0.6 + bobY, 0.5);
+
+        candleModel.position.copy(centerPos);
+        candleModel.rotation.y = Math.sin(t * 0.3) * 0.12 + Math.PI;
+        candleModel.visible = true;
+
+        const flamePos = centerPos.clone();
+        flamePos.y += FLAME_OFFSET_Y * MODEL_SCALE;
+        flamePos.z += FLAME_OFFSET_Z;
+
+        const flicker = 0.85 + Math.random() * 0.3;
+        candleLight.position.copy(flamePos);
+        candleLight.intensity = 3.5 * flicker;
+
+        const tipScreen = worldToScreen(flamePos);
+
+        if (appState === 'ready' || appState === 'filling') {
+            const isFist = handDetected && palmOpen < 0.28;
+
+            if (isFist) {
+                appState = 'filling';
+                fistProgress += dt / FILL_DURATION;
+                candleLight.intensity = (3.5 + fistProgress * 8) * flicker;
+                if (fistProgress >= 1.0) {
+                    fistProgress = 1.0;
+                    enterPaintingMode();
+                }
+            } else {
+                fistProgress -= dt * DECAY_RATE;
+                if (fistProgress < 0) fistProgress = 0;
+                if (fistProgress <= 0 && appState === 'filling') appState = 'ready';
+            }
+
+            document.getElementById('status').textContent =
+                handDetected
+                    ? (palmOpen < 0.28 ? `握拳中 ${(fistProgress * 100).toFixed(0)}%` : '请握拳点燃蜡烛')
+                    : '等待检测手部...';
+        }
+
+        drawProgressRing(tipScreen.x, tipScreen.y, fistProgress);
+        renderer.render(scene, threeCamera);
+        return;
+    }
+
+    // ===== 壁画模式 =====
+    if (handDetected) {
+        const flicker = 0.82 + Math.random() * 0.36;
+
+        const ndcX = (handX / window.innerWidth) * 2 - 1;
+        const ndcY = -(handY / window.innerHeight) * 2 + 1;
+        const basePos = new THREE.Vector3(ndcX * MAP_X, ndcY * MAP_Y, 0.5);
+
+        candleModel.position.copy(basePos);
+        candleModel.rotation.y = Math.sin(t * 0.9) * 0.12 + Math.PI;
+        candleModel.rotation.x = ndcY * -0.12;
+        candleModel.visible = true;
+
+        const flamePos = basePos.clone();
+        flamePos.y += FLAME_OFFSET_Y * MODEL_SCALE;
+        flamePos.z += FLAME_OFFSET_Z;
+
+        candleLight.position.copy(flamePos);
+        candleLight.intensity = (1 + palmOpen * 9) * flicker;
+
+        const tipScreen = worldToScreen(flamePos);
+        const j = 3 + palmOpen * 5;
+        const cx = tipScreen.x + (Math.random() - 0.5) * j;
+        const cy = tipScreen.y + (Math.random() - 0.5) * j;
+
+        // 握拳 = 极小光圈(1%)，张开 = 大光圈(60%)
+        const targetR = 0.05+ palmOpen * 59;
+        lightRadius += (targetR - lightRadius) * 0.2;
+
+        root.style.setProperty('--cx', cx + 'px');
+        root.style.setProperty('--cy', cy + 'px');
+        root.style.setProperty('--r', lightRadius + '%');
+
+        document.getElementById('status').textContent =
+            palmOpen > 0.5 ? `张开 ${(palmOpen * 100).toFixed(0)}% · 照亮中` : '张开手掌照亮壁画';
+    } else {
+        lightRadius *= 0.9;
+        root.style.setProperty('--r', lightRadius + '%');
+        if (candleModel) candleModel.visible = false;
+        candleLight.intensity *= 0.7;
+        document.getElementById('status').textContent = '未检测到手';
+    }
+
+    renderer.render(scene, threeCamera);
+}
+
+async function autoStart() {
+    initThree();
+    uiCanvas.width = window.innerWidth;
+    uiCanvas.height = window.innerHeight;
+    animate();
+
+    try {
+        await initMediaPipe();
+        document.getElementById('start-hint').textContent = '握拳两秒 · 点燃蜡烛';
+        appState = 'ready';
+    } catch (e) {
+        document.getElementById('start-hint').textContent = '摄像头启动失败，请刷新重试';
+        console.error(e);
+    }
+}
+
+autoStart();
+
+window.addEventListener('resize', () => {
+    if (renderer) {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        threeCamera.aspect = window.innerWidth / window.innerHeight;
+        threeCamera.updateProjectionMatrix();
+    }
+    uiCanvas.width = window.innerWidth;
+    uiCanvas.height = window.innerHeight;
+});
+
+</script>
+</body>
+</html>
