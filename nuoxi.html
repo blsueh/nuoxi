@@ -103,10 +103,10 @@
         }
     </style>
 
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://unpkg.com/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
+    <script src="https://unpkg.com/@mediapipe/drawing_utils@0.3/drawing_utils.js"></script>
+    <script src="https://unpkg.com/@mediapipe/hands@0.4/hands.js"></script>
+    <script src="https://unpkg.com/three@0.134.0/build/three.min.js"></script>
     <script src="https://unpkg.com/three@0.134.0/examples/js/loaders/GLTFLoader.js"></script>
 </head>
 <body>
@@ -233,6 +233,9 @@ function initThree() {
         candleModel.rotation.y = Math.PI;
         scene.add(candleModel);
         modelLoaded = true;
+    }, undefined, (err) => {
+        console.error('模型加载失败：', err);
+        document.getElementById('start-hint').textContent = '3D模型加载失败，请检查 nuoxi.glb 文件';
     });
 }
 
@@ -288,7 +291,7 @@ function drawProgressRing(sx, sy, progress) {
 
 async function initMediaPipe() {
     const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+        locateFile: (file) => `https://unpkg.com/@mediapipe/hands@0.4/${file}`
     });
     hands.setOptions({
         maxNumHands: 1, modelComplexity: 0,
@@ -460,7 +463,16 @@ async function autoStart() {
     }
 }
 
-autoStart();
+// 等所有外部脚本都加载完成再启动，避免报错
+function tryAutoStart() {
+    if (typeof THREE === 'undefined' || typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+        document.getElementById('start-hint').textContent = '资源加载中，请稍候...';
+        setTimeout(tryAutoStart, 300);  // 每 0.3 秒检查一次
+        return;
+    }
+    autoStart();
+}
+tryAutoStart();
 
 window.addEventListener('resize', () => {
     if (renderer) {
